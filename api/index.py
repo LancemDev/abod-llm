@@ -1,43 +1,36 @@
-import logging
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import numpy as np
 from collections import deque
 import time
 import os
+import re  
 from dotenv import load_dotenv
-
-# Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load environment variables from .env file
 load_dotenv()
 
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-logging.info("Loaded environment variables.")
+OPENAI_KEY=os.getenv("OPENAI_API_KEY")
 
 # Flask app
 app = Flask(__name__)
-logging.info("Flask app initialized.")
 
 # OpenAI setup
 openai_client = OpenAI(api_key=OPENAI_KEY)
-logging.info("OpenAI client initialized.")
 
 # Store recent pulse rate averages (last 3 intervals, ~45 seconds)
 pulse_history = deque(maxlen=3)  # Stores dicts: {"pulse": float, "timestamp": float}
-logging.info("Pulse history deque initialized.")
 
 # Determine mood based on pulse rate and trend
 def infer_mood(pulse, history):
-    logging.debug(f"Inferring mood for pulse: {pulse}, history: {history}")
+    # Compute trend (rising, stable, falling)
     if len(history) >= 2:
         recent_pulses = [h["pulse"] for h in history]
         trend = "rising" if recent_pulses[-1] > recent_pulses[-2] else "falling" if recent_pulses[-1] < recent_pulses[-2] else "stable"
     else:
         trend = "stable"
-    logging.debug(f"Computed trend: {trend}")
 
+    # Mood thresholds
     if pulse > 100 and trend in ["rising", "stable"]:
         return "excited"
     elif pulse < 80 and trend in ["falling", "stable"]:
@@ -47,26 +40,18 @@ def infer_mood(pulse, history):
     else:
         return "hyped"
 
-@app.route('/')
-def index():
-    logging.info("Index route accessed.")
-    return "Welcome to the DJ Agent API!"
-
 # API to receive sensor data (pulse rate)
 @app.route('/sensor', methods=['POST'])
 def process_sensor():
     try:
         data = request.json
-        logging.debug(f"Received sensor data: {data}")
         pulse = float(data.get('pulse', 80))  # Average pulse rate
 
         # Update pulse history
         pulse_history.append({"pulse": pulse, "timestamp": time.time()})
-        logging.info(f"Updated pulse history: {list(pulse_history)}")
 
         # Infer mood
         mood = infer_mood(pulse, pulse_history)
-        logging.info(f"Inferred mood: {mood}")
 
         # LLM: Recommend song, artist, and lighting
         prompt = (
@@ -74,7 +59,6 @@ def process_sensor():
             f"Pulse history: {[h['pulse'] for h in pulse_history]}. "
             "Suggest a song, artist, and lighting color to match the mood."
         )
-        logging.debug(f"Generated prompt for OpenAI: {prompt}")
         response = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -83,15 +67,13 @@ def process_sensor():
             ]
         )
         recommendation = response.choices[0].message.content
-        logging.info(f"Received recommendation from OpenAI: {recommendation}")
-
-        # Parse recommendation
+        # Parse recommendation (assume format: "Song: [name], Artist: [artist], Lighting: [color]")
         try:
             song = recommendation.split("Song: ")[1].split(",")[0].strip()
             artist = recommendation.split("Artist: ")[1].split(",")[0].strip()
             color = recommendation.split("Lighting: ")[1].strip()
         except IndexError:
-            logging.warning("Failed to parse recommendation. Using fallback values.")
+            # Fallback if parsing fails
             song, artist, color = "Sweet but Psycho", "Ava Max", "red"
 
         return jsonify({
@@ -102,7 +84,6 @@ def process_sensor():
             "status": "success"
         })
     except Exception as e:
-        logging.error(f"Error in /sensor route: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # API to communicate with Spotify server
@@ -110,7 +91,6 @@ def process_sensor():
 def process_spotify():
     try:
         data = request.json
-        logging.debug(f"Received Spotify data: {data}")
         current_song = data.get('current_song', "Unknown")
         current_artist = data.get('current_artist', "Unknown")
         queue = data.get('queue', [])  # List of {"song": str, "artist": str}
@@ -118,7 +98,6 @@ def process_spotify():
         # Get latest pulse rate and mood
         latest_pulse = pulse_history[-1]["pulse"] if pulse_history else 80
         mood = infer_mood(latest_pulse, pulse_history)
-        logging.info(f"Latest pulse: {latest_pulse}, inferred mood: {mood}")
 
         # LLM: Recommend song/artist to update queue
         queue_str = ", ".join([f"{item['song']} by {item['artist']}" for item in queue])
@@ -127,9 +106,10 @@ def process_spotify():
             f"Current song: {current_song} by {current_artist}. "
             f"Current queue: {queue_str if queue_str else 'empty'}. "
             f"Pulse history: {[h['pulse'] for h in pulse_history]}. "
-            "Suggest a song and artist to add to the queue to match the mood."
+            "Suggest a song and artist to add to the queue to match the mood. "
+            "Return the recommendation in this exact format: 'Song: [song name], Artist: [artist name]' "
+            "For example: 'Song: Blinding Lights, Artist: The Weeknd'"
         )
-        logging.debug(f"Generated prompt for OpenAI: {prompt}")
         response = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -138,15 +118,19 @@ def process_spotify():
             ]
         )
         recommendation = response.choices[0].message.content
-        logging.info(f"Received recommendation from OpenAI: {recommendation}")
+        print(f"LLM Response: {recommendation}")  
 
-        # Parse recommendation
-        try:
-            song = recommendation.split("Song: ")[1].split(",")[0].strip()
-            artist = recommendation.split("Artist: ")[1].strip()
-        except IndexError:
-            logging.warning("Failed to parse recommendation. Using fallback values.")
-            song, artist = "Uptown Funk", "Mark Ronson"
+        # Parse recommendation using regex for more robust matching
+        song_match = re.search(r"Song:\s*([^,]+)", recommendation)
+        artist_match = re.search(r"Artist:\s*(.+)", recommendation)
+
+        if song_match and artist_match:
+            song = song_match.group(1).strip()
+            artist = artist_match.group(1).strip()
+        else:
+            # Fallback if parsing fails
+            print("Parsing failed, using fallback.")
+            song, artist = "Sweet but Psycho", "Ava Max"  
 
         return jsonify({
             "song": song,
@@ -154,10 +138,8 @@ def process_spotify():
             "status": "success"
         })
     except Exception as e:
-        logging.error(f"Error in /spotify route: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # Run Flask server
 if __name__ == "__main__":
-    logging.info("Starting Flask server.")
     app.run(host="0.0.0.0", port=5000, debug=True)
