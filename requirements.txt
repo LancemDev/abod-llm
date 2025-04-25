@@ -1,1 +1,6 @@
 Flask
+python-dotenv
+openai
+requests
+numpy
+collections
