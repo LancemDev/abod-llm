@@ -15,15 +15,23 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 load_dotenv()
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Corrected to GROQ_API_KEY
 logging.info("Loaded environment variables.")
 
 # Flask app
 app = Flask(__name__)
 logging.info("Flask app initialized.")
 
-# OpenAI setup
+# OpenAI setup (for /sensor)
 openai_client = OpenAI(api_key=OPENAI_KEY)
 logging.info("OpenAI client initialized.")
+
+# Groq setup (for /spotify)
+groq_client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
+logging.info("Groq client initialized for Spotify endpoint.")
 
 # Store recent pulse rate averages (last 3 intervals, ~45 seconds)
 pulse_history = deque(maxlen=3)  # Stores dicts: {"pulse": float, "timestamp": float}
@@ -69,7 +77,7 @@ def process_sensor():
         mood = infer_mood(pulse, pulse_history)
         logging.info(f"Inferred mood: {mood}")
 
-        # LLM: Recommend song, artist, and lighting
+        # LLM: Recommend song, artist, and lighting (using OpenAI)
         prompt = (
             f"Crowd mood is {mood} based on average pulse rate {pulse} BPM. "
             f"Pulse history: {[h['pulse'] for h in pulse_history]}. "
@@ -85,7 +93,9 @@ def process_sensor():
             ]
         )
         recommendation = response.choices[0].message.content
-        logging.info(f"Received recommendation from OpenAI: {recommendation}")
+        # Clean response: Remove \n and extra whitespace
+        recommendation = " ".join(recommendation.strip().split())
+        logging.debug(f"Cleaned OpenAI recommendation: {recommendation}")
 
         # Parse recommendation with regex
         song_match = re.search(r"Song:\s*([^,]+)", recommendation)
@@ -108,7 +118,7 @@ def process_sensor():
         logging.error(f"Error in /sensor route: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# API to communicate with Spotify server
+# API to communicate with Spotify server (using Groq)
 @app.route('/spotify', methods=['POST'])
 def process_spotify():
     try:
@@ -123,7 +133,7 @@ def process_spotify():
         mood = infer_mood(latest_pulse, pulse_history)
         logging.info(f"Latest pulse: {latest_pulse}, inferred mood: {mood}")
 
-        # LLM: Recommend song/artist to update queue
+        # LLM: Recommend song/artist to update queue (using Groq)
         queue_str = ", ".join([f"{item['song']} by {item['artist']}" for item in queue])
         prompt = (
             f"Crowd mood is {mood} based on pulse rate {latest_pulse} BPM. "
@@ -133,16 +143,18 @@ def process_spotify():
             "Suggest a song and artist to add to the queue in the format: "
             "Song: <song>, Artist: <artist>"
         )
-        logging.debug(f"Generated prompt for OpenAI: {prompt}")
-        response = openai_client.chat.completions.create(
-            model="gpt-4o",
+        logging.debug(f"Generated prompt for Groq: {prompt}")
+        response = groq_client.chat.completions.create(
+            model="llama3-70b-8192",  # Groq model
             messages=[
-                {"role": "system", "content": "You are a DJ agent that recommends songs and artists to update a Spotify queue based on crowd mood and current playback."},
+                {"role": "system", "content": "You are a DJ agent that recommends songs and artists to update a Spotify queue based on mood and playback."},
                 {"role": "user", "content": prompt}
             ]
         )
         recommendation = response.choices[0].message.content
-        logging.info(f"Received recommendation from OpenAI: {recommendation}")
+        # Clean response: Remove \n and extra whitespace
+        recommendation = " ".join(recommendation.strip().split())
+        logging.debug(f"Cleaned Groq recommendation: {recommendation}")
 
         # Parse recommendation with regex
         song_match = re.search(r"Song:\s*([^,]+)", recommendation)
