@@ -1,4 +1,5 @@
 import logging
+import re
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import numpy as np
@@ -72,7 +73,8 @@ def process_sensor():
         prompt = (
             f"Crowd mood is {mood} based on average pulse rate {pulse} BPM. "
             f"Pulse history: {[h['pulse'] for h in pulse_history]}. "
-            "Suggest a song, artist, and lighting color to match the mood."
+            "Suggest a song, artist, and lighting color to match the mood in the format: "
+            "Song: <song>, Artist: <artist>, Lighting: <color>"
         )
         logging.debug(f"Generated prompt for OpenAI: {prompt}")
         response = openai_client.chat.completions.create(
@@ -85,14 +87,15 @@ def process_sensor():
         recommendation = response.choices[0].message.content
         logging.info(f"Received recommendation from OpenAI: {recommendation}")
 
-        # Parse recommendation
-        try:
-            song = recommendation.split("Song: ")[1].split(",")[0].strip()
-            artist = recommendation.split("Artist: ")[1].split(",")[0].strip()
-            color = recommendation.split("Lighting: ")[1].strip()
-        except IndexError:
-            logging.warning("Failed to parse recommendation. Using fallback values.")
-            song, artist, color = "Sweet but Psycho", "Ava Max", "red"
+        # Parse recommendation with regex
+        song_match = re.search(r"Song:\s*([^,]+)", recommendation)
+        artist_match = re.search(r"Artist:\s*([^,]+)", recommendation)
+        lighting_match = re.search(r"Lighting:\s*(\w+)", recommendation)
+
+        song = song_match.group(1).strip() if song_match else "Sweet but Psycho"
+        artist = artist_match.group(1).strip() if artist_match else "Ava Max"
+        color = lighting_match.group(1).strip() if lighting_match else "red"
+        logging.debug(f"Parsed recommendation - Song: {song}, Artist: {artist}, Lighting: {color}")
 
         return jsonify({
             "mood": mood,
@@ -127,7 +130,8 @@ def process_spotify():
             f"Current song: {current_song} by {current_artist}. "
             f"Current queue: {queue_str if queue_str else 'empty'}. "
             f"Pulse history: {[h['pulse'] for h in pulse_history]}. "
-            "Suggest a song and artist to add to the queue to match the mood."
+            "Suggest a song and artist to add to the queue in the format: "
+            "Song: <song>, Artist: <artist>"
         )
         logging.debug(f"Generated prompt for OpenAI: {prompt}")
         response = openai_client.chat.completions.create(
@@ -140,13 +144,13 @@ def process_spotify():
         recommendation = response.choices[0].message.content
         logging.info(f"Received recommendation from OpenAI: {recommendation}")
 
-        # Parse recommendation
-        try:
-            song = recommendation.split("Song: ")[1].split(",")[0].strip()
-            artist = recommendation.split("Artist: ")[1].strip()
-        except IndexError:
-            logging.warning("Failed to parse recommendation. Using fallback values.")
-            song, artist = "Uptown Funk", "Mark Ronson"
+        # Parse recommendation with regex
+        song_match = re.search(r"Song:\s*([^,]+)", recommendation)
+        artist_match = re.search(r"Artist:\s*([^,]+)", recommendation)
+
+        song = song_match.group(1).strip() if song_match else "Uptown Funk"
+        artist = artist_match.group(1).strip() if artist_match else "Mark Ronson"
+        logging.debug(f"Parsed recommendation - Song: {song}, Artist: {artist}")
 
         return jsonify({
             "song": song,
