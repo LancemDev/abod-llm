@@ -1,6 +1,7 @@
 import logging
 import re
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Added for CORS support
 from openai import OpenAI
 import numpy as np
 from collections import deque
@@ -20,7 +21,8 @@ logging.info("Loaded environment variables.")
 
 # Flask app
 app = Flask(__name__)
-logging.info("Flask app initialized.")
+CORS(app)  # Enable CORS for all routes
+logging.info("CORS initialized for Flask app.")
 
 # OpenAI setup (for /sensor)
 openai_client = OpenAI(api_key=OPENAI_KEY)
@@ -156,17 +158,17 @@ def process_spotify():
         recommendation = " ".join(recommendation.strip().split())
         logging.debug(f"Cleaned Groq recommendation: {recommendation}")
 
-        # Parse recommendation with regex
-        song_match = re.search(r"Song:\s*([^,]+),\s*Artist:", recommendation)
-        artist_match = re.search(r"Artist:\s*(.+?)(?:\n|$)", recommendation)
+        # Parse recommendation with regex (improved for robustness)
+        song_match = re.search(r"Song:\s*\"?([^\",]+)\"?(?:,\s*Artist:|$)", recommendation)
+        artist_match = re.search(r"Artist:\s*([^,\n]+)", recommendation)
 
         song = song_match.group(1).strip() if song_match else "Uptown Funk"
         artist = artist_match.group(1).strip() if artist_match else "Mark Ronson"
         logging.debug(f"Parsed recommendation - Song: {song}, Artist: {artist}")
 
         return jsonify({
-            "artist": artist,
             "song": song,
+            "artist": artist,
             "status": "success"
         })
     except Exception as e:
