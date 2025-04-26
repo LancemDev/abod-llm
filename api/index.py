@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 load_dotenv()
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Corrected to GROQ_API_KEY
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 logging.info("Loaded environment variables.")
 
 # Flask app
@@ -88,7 +88,7 @@ def process_sensor():
         response = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a DJ agent that recommends songs, artists, and lighting colors based on crowd mood."},
+                {"role": "system", "content": "You are a DJ agent that recommends songs, artists, and lighting colors based on crowd mood. Provide only the recommendation in the format: Song: <song>, Artist: <artist>, Lighting: <color>"},
                 {"role": "user", "content": prompt}
             ]
         )
@@ -98,9 +98,9 @@ def process_sensor():
         logging.debug(f"Cleaned OpenAI recommendation: {recommendation}")
 
         # Parse recommendation with regex
-        song_match = re.search(r"Song:\s*([^,]+)", recommendation)
-        artist_match = re.search(r"Artist:\s*([^,]+)", recommendation)
-        lighting_match = re.search(r"Lighting:\s*(\w+)", recommendation)
+        song_match = re.search(r"Song:\s*\"?([^\",]+)\"?(?:,\s*Artist:|$)", recommendation)
+        artist_match = re.search(r"Artist:\s*([^,]+)(?:,\s*Lighting:|$)", recommendation)
+        lighting_match = re.search(r"Lighting:\s*([^,\n]+)", recommendation)
 
         song = song_match.group(1).strip() if song_match else "Sweet but Psycho"
         artist = artist_match.group(1).strip() if artist_match else "Ava Max"
@@ -147,7 +147,7 @@ def process_spotify():
         response = groq_client.chat.completions.create(
             model="llama3-70b-8192",  # Groq model
             messages=[
-                {"role": "system", "content": "You are a DJ agent that recommends songs and artists to update a Spotify queue based on mood and playback."},
+                {"role": "system", "content": "You are a DJ agent that recommends songs and artists to update a Spotify queue based on mood and playback. Provide only the recommendation in the format: Song: <song>, Artist: <artist>"},
                 {"role": "user", "content": prompt}
             ]
         )
@@ -157,16 +157,16 @@ def process_spotify():
         logging.debug(f"Cleaned Groq recommendation: {recommendation}")
 
         # Parse recommendation with regex
-        song_match = re.search(r"Song:\s*([^,]+)", recommendation)
-        artist_match = re.search(r"Artist:\s*([^,]+)", recommendation)
+        song_match = re.search(r"Song:\s*([^,]+),\s*Artist:", recommendation)
+        artist_match = re.search(r"Artist:\s*(.+?)(?:\n|$)", recommendation)
 
         song = song_match.group(1).strip() if song_match else "Uptown Funk"
         artist = artist_match.group(1).strip() if artist_match else "Mark Ronson"
         logging.debug(f"Parsed recommendation - Song: {song}, Artist: {artist}")
 
         return jsonify({
-            "song": song,
             "artist": artist,
+            "song": song,
             "status": "success"
         })
     except Exception as e:
