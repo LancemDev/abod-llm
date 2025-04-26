@@ -3,3 +3,4 @@ python-dotenv
 openai
 requests
 numpy
+Flask-Cors
